@@ -1,0 +1,14 @@
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\bin\Debug\net8.0-windows\AutoGrade.WinForms.exe
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\bin\Debug\net8.0-windows\AutoGrade.WinForms.deps.json
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\bin\Debug\net8.0-windows\AutoGrade.WinForms.runtimeconfig.json
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\bin\Debug\net8.0-windows\AutoGrade.WinForms.dll
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\bin\Debug\net8.0-windows\AutoGrade.WinForms.pdb
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.AssemblyInfoInputs.cache
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.AssemblyInfo.cs
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.csproj.CoreCompileInputs.cache
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.dll
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\refint\AutoGrade.WinForms.dll
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.pdb
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\AutoGrade.WinForms.genruntimeconfig.cache
+C:\Users\ASUS ROG\Desktop\examcorr\winforms_client\AutoGrade.WinForms\obj\Debug\net8.0-windows\ref\AutoGrade.WinForms.dll
