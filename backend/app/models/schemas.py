@@ -1,35 +1,48 @@
-from enum import Enum
-from typing import List, Optional
 from datetime import datetime
+from enum import Enum
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 class BaseSchema(BaseModel):
+    """
+    Base configuration for all schemas.
+    Allows creating schemas from ORM instances.
+    """
     class Config:
         from_attributes = True
 
-class TeacherBase(BaseSchema):
-    name: str
-    email: str
+class UserBase(BaseSchema):
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
 
-class TeacherCreate(TeacherBase):
-    pass
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=6)
 
-class Teacher(TeacherBase):
+class UserLogin(BaseSchema):
+    username: str
+    password: str
+
+class User(UserBase):
     id: int
+    role: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 class ClassBase(BaseSchema):
-    name: str
+    name: str = Field(..., min_length=2, max_length=50)
 
 class ClassCreate(ClassBase):
-    teacher_id: int
+    pass
 
 class Class(ClassBase):
     id: int
-    teacher_id: int
+    user_id: int
 
 class SubjectBase(BaseSchema):
-    name: str
+    name: str = Field(..., min_length=2, max_length=50)
 
 class SubjectCreate(SubjectBase):
     class_id: int
@@ -39,8 +52,8 @@ class Subject(SubjectBase):
     class_id: int
 
 class SubmissionBase(BaseSchema):
-    student_name: str
-    score: Optional[float] = None
+    student_name: str = Field(..., min_length=2, max_length=100)
+    score: Optional[float] = Field(None, ge=0)
     feedback: Optional[str] = None
 
 class SubmissionCreate(SubmissionBase):
@@ -68,19 +81,19 @@ class QuestionSpec(BaseModel):
     question_id: str
     type: QuestionType
     prompt: str
-    max_points: float = Field(ge=0)
+    max_points: float = Field(..., ge=0)
     expected_answer: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
 
 
 class OCRRequest(BaseModel):
-    image_base64: str
+    image_base64: str = Field(..., description="Base64 encoded string of the image")
     task: OCRTask = OCRTask.text
 
 
 class OCRResult(BaseModel):
     raw_text: str
-    confidence: float = Field(ge=0, le=1)
+    confidence: float = Field(..., ge=0, le=1)
     extracted_answers: List[str] = Field(default_factory=list)
 
 
@@ -91,9 +104,9 @@ class GradeRequest(BaseModel):
 
 
 class GradeResult(BaseModel):
-    awarded_points: float
-    confidence: float = Field(ge=0, le=1)
-    method: str
+    awarded_points: float = Field(..., ge=0)
+    confidence: float = Field(..., ge=0, le=1)
+    method: str = Field(..., description="Method used for grading, e.g., 'gemini' or 'exact_match'")
     needs_human_review: bool
 
 
@@ -108,10 +121,10 @@ class FeedbackResponse(BaseModel):
 
 
 class TranslateRequest(BaseModel):
-    text: str
-    source_lang: str = "fr"
-    target_lang: str = "en"
-
+    text: str = Field(..., min_length=1)
+    source_lang: str = Field("fr", min_length=2, max_length=5)
+    target_lang: str = Field("en", min_length=2, max_length=5)
+    provider: str = Field("google")
 
 class TranslateResponse(BaseModel):
     translated_text: str

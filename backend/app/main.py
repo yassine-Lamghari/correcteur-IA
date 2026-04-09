@@ -1,10 +1,16 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 
 from app.api.routes import router
 from app.core.config import settings
-from app.core.exceptions import AutoGradeException
+from app.core.exceptions import (
+    AutoGradeException,
+    autograde_exception_handler,
+    validation_exception_handler,
+    global_exception_handler,
+)
 
 app = FastAPI(
     title="AutoGrade OCR API",
@@ -25,12 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(AutoGradeException)
-async def autograde_exception_handler(request: Request, exc: AutoGradeException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.message},
-    )
+app.add_exception_handler(AutoGradeException, autograde_exception_handler)
+app.add_exception_handler(ResponseValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(router)
 

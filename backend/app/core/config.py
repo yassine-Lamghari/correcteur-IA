@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     glm_hf_token: str = ""
     translation_default_target: str = "en"
     allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    database_url: str = "sqlite:///./app.db"
 
     model_config = SettingsConfigDict(
         env_prefix="AUTOGRADE_",

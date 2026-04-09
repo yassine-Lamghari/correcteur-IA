@@ -1,45 +1,82 @@
-import google.generativeai as genai
-import os
 import json
+import logging
+import os
+from typing import Any, Dict
+
+import google.generativeai as genai
 from json_repair import repair_json
-from typing import Dict, Any
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger("autograde")
 
 class GeminiCorrector:
+    """
+    A service class for integrating with Google's Gemini API to evaluate and grade student answers.
+    """
     def __init__(self):
         # Configure Gemini API key from environment variable
         api_key = os.environ.get("GEMINI_API_KEY", "")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel("gemini-2.5-flash")
     
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(Exception),
+        reraise=True,
+        before_sleep=lambda retry_state: logger.warning(
+            f"Retrying Gemini API call: attempt {retry_state.attempt_number} due to {retry_state.outcome.exception()}"
+        )
+    )
+    def _call_gemini_api(self, system_prompt: str) -> str:
+        """
+        Calls the Gemini API with exponential backoff retries.
+
+        Args:
+            system_prompt (str): The full prompt containing instructions and the student's answer.
+
+        Returns:
+            str: The raw text response from the API.
+        """
+        response = self.model.generate_content(system_prompt)
+        return response.text
+
     def evaluate_answer(self, prompt: str, student_answer: str, max_points: float) -> Dict[str, Any]:
         """
         Option 2: Intelligent auto-correction without an exact answer key.
         Uses Gemini to grade the student's answer based solely on the prompt and logic.
+        
+        Args:
+            prompt (str): Specific grading instructions or criteria.
+            student_answer (str): The OCR transcribed text of the student's exam copy.
+            max_points (float): The maximum possible score for the exam.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing 'score', 'feedback', and 'confidence'.
         """
         system_prompt = f"""
-        Tu es un professeur expert. Je vais te donner la retranscription OCR d'une copie d'examen complète.
-        Ce texte contient souvent les questions ET les réponses de l'étudiant (les choix de réponse peuvent y être indiqués, par exemple avec le symbole ■ ou [x] pour coché, et □ ou [ ] pour non coché, ou des réponses textuelles).
+        You are an expert teacher. I will provide you with the OCR transcription of a complete exam copy.
+        This text often contains the questions AND the student's answers (choices might be indicated, for example with the symbol ■ or [x] for checked, and □ or [ ] for unchecked, or textual answers).
         
-        Consignes spécifiques pour la correction : {prompt}
+        Specific grading instructions: {prompt}
         
-        Contenu de la copie de l'étudiant (Texte OCR) : 
+        Content of the student's copy (OCR text): 
         {student_answer}
         
-        Note maximale possible globale: {max_points}
+        Global maximum possible score: {max_points}
         
-        Ta tâche est d'analyser le document en entier, d'identifier chaque question, d'évaluer la pertinence de la réponse fournie par l'étudiant et de calculer une note globale. Ne t'appuie que sur le bon sens et les connaissances académiques générales.
+        Your task is to analyze the entire document, identify each question, evaluate the relevance of the answer provided by the student, and calculate an overall score. Rely only on common sense and general academic knowledge.
         
-        Renvoie UNIQUEMENT un objet JSON valide en respectant exactement cette structure (aucun texte autour):
+        Return ONLY a valid JSON object strictly respecting this structure (no surrounding text):
         {{
             "score": <float>,
-            "feedback": "<Détail point par point des erreurs de l'étudiant et justification détaillée de la note finale>",
-            "confidence": <float entre 0 et 1, estimant la certitude de ta correction de ce texte>
+            "feedback": "<Point by point detailing of the student's errors and detailed justification of the final score>",
+            "confidence": <float between 0 and 1, estimating the certainty of your correction on this text>
         }}
         """
         
         try:
-            response = self.model.generate_content(system_prompt)
-            text_response = response.text
+            text_response = self._call_gemini_api(system_prompt)
             
             # Clean up markdown codeblocks if Gemini wrapped the JSON
             if text_response.startswith("```json"):
@@ -58,9 +95,10 @@ class GeminiCorrector:
                 "confidence": float(parsed.get("confidence", 0.8))
             }
         except Exception as e:
+            logger.error(f"Gemini evaluation failed completely after retries: {str(e)}", exc_info=True)
             # Fallback in case of error
             return {
                 "score": 0,
-                "feedback": f"Erreur lors de l'évaluation par l'IA: {str(e)}",
+                "feedback": f"AI evaluation error: {str(e)}",
                 "confidence": 0.0
             }

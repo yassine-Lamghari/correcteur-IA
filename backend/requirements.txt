@@ -16,3 +16,7 @@ json-repair
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+python-json-logger
+tenacity
+email-validator
+psycopg2-binary

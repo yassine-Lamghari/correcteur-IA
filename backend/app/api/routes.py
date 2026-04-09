@@ -1,9 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import timedelta
 
 from app.models import schemas, domain
 from app.core.database import get_db
+from app.core.auth import (
+    verify_password,
+    get_password_hash,
+    create_access_token,
+    require_auth,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 from app.models.schemas import (
     FeedbackRequest,
     FeedbackResponse,
@@ -13,6 +22,9 @@ from app.models.schemas import (
     OCRResult,
     TranslateRequest,
     TranslateResponse,
+    UserCreate,
+    User as UserSchema,
+    Token
 )
 from app.services.feedback import FeedbackService
 from app.services.glm_ocr import GLMOCRClient
@@ -28,35 +40,65 @@ from app.core.database import engine
 domain.Base.metadata.create_all(bind=engine)
 # ----------------------------------------------------
 
-# --- CRUD for Teacher / Class / Subject / Submission ---
-
-@router.post("/teachers/", response_model=schemas.Teacher)
-def create_teacher(teacher: schemas.TeacherCreate, db: Session = Depends(get_db)):
-    db_teacher = domain.Teacher(name=teacher.name, email=teacher.email)
-    db.add(db_teacher)
+# --- Auth Routes ---
+@router.post("/auth/register", response_model=UserSchema, tags=["auth"])
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(domain.User).filter((domain.User.username == user.username) | (domain.User.email == user.email)).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username or email already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    new_user = domain.User(
+        username=user.username,
+        email=user.email,
+        hashed_password=hashed_password,
+        role="teacher"
+    )
+    db.add(new_user)
     db.commit()
-    db.refresh(db_teacher)
-    return db_teacher
+    db.refresh(new_user)
+    return new_user
 
-@router.get("/teachers/", response_model=List[schemas.Teacher])
-def read_teachers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    teachers = db.query(domain.Teacher).offset(skip).limit(limit).all()
-    return teachers
+@router.post("/auth/login", response_model=Token, tags=["auth"])
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(domain.User).filter(domain.User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/auth/me", response_model=UserSchema, tags=["auth"])
+def get_current_user(token_data: dict = Depends(require_auth), db: Session = Depends(get_db)):
+    user = db.query(domain.User).filter(domain.User.username == token_data.get("sub")).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+# --- CRUD for Class / Subject / Submission ---
 
 @router.post("/classes/", response_model=schemas.Class)
-def create_class(klass: schemas.ClassCreate, db: Session = Depends(get_db)):
-    db_class = domain.Class(name=klass.name, teacher_id=klass.teacher_id)
+def create_class(course_class: schemas.ClassCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    db_class = domain.Class(name=course_class.name, user_id=current_user.id)
     db.add(db_class)
     db.commit()
     db.refresh(db_class)
     return db_class
 
-@router.get("/classes/teacher/{teacher_id}", response_model=List[schemas.Class])
-def read_classes_by_teacher(teacher_id: int, db: Session = Depends(get_db)):
-    return db.query(domain.Class).filter(domain.Class.teacher_id == teacher_id).all()
+@router.get("/classes/me", response_model=List[schemas.Class])
+def read_my_classes(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return db.query(domain.Class).filter(domain.Class.user_id == current_user.id).all()
 
 @router.post("/subjects/", response_model=schemas.Subject)
-def create_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
+def create_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db), current_user=Depends(require_auth)):
     db_subject = domain.Subject(name=subject.name, class_id=subject.class_id)
     db.add(db_subject)
     db.commit()
@@ -64,11 +106,11 @@ def create_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)
     return db_subject
 
 @router.get("/subjects/class/{class_id}", response_model=List[schemas.Subject])
-def read_subjects_by_class(class_id: int, db: Session = Depends(get_db)):
+def read_subjects_by_class(class_id: int, db: Session = Depends(get_db), current_user=Depends(require_auth)):
     return db.query(domain.Subject).filter(domain.Subject.class_id == class_id).all()
 
 @router.post("/submissions/", response_model=schemas.Submission)
-def create_submission(submission: schemas.SubmissionCreate, db: Session = Depends(get_db)):
+def create_submission(submission: schemas.SubmissionCreate, db: Session = Depends(get_db), current_user=Depends(require_auth)):
     db_sub = domain.Submission(
         student_name=submission.student_name,
         score=submission.score,
@@ -81,7 +123,7 @@ def create_submission(submission: schemas.SubmissionCreate, db: Session = Depend
     return db_sub
 
 @router.get("/submissions/subject/{subject_id}", response_model=List[schemas.Submission])
-def read_submissions_by_subject(subject_id: int, db: Session = Depends(get_db)):
+def read_submissions_by_subject(subject_id: int, db: Session = Depends(get_db), current_user=Depends(require_auth)):
     return db.query(domain.Submission).filter(domain.Submission.subject_id == subject_id).all()
 
 # --- Existing Endpoints ---
@@ -93,40 +135,40 @@ translation_service = TranslationService()
 
 
 @router.post("/ocr", response_model=OCRResult)
-def ocr(request: OCRRequest) -> OCRResult:
+def ocr(request: OCRRequest, current_user=Depends(require_auth)) -> OCRResult:
     return ocr_client.recognize(request.image_base64, request.task)
 
 
 @router.post("/grade", response_model=GradeResult)
-def grade(request: GradeRequest) -> GradeResult:
+def grade(request: GradeRequest, current_user=Depends(require_auth)) -> GradeResult:
     return grading_service.grade(request.question, request.student_answer, use_llm=request.use_llm)
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
-def feedback(request: FeedbackRequest) -> FeedbackResponse:
+def feedback(request: FeedbackRequest, current_user=Depends(require_auth)) -> FeedbackResponse:
     text = feedback_service.generate(request)
     return FeedbackResponse(feedback=text)
 
 
 @router.post("/translate", response_model=TranslateResponse)
-def translate(request: TranslateRequest) -> TranslateResponse:
+def translate(request: TranslateRequest, current_user=Depends(require_auth)) -> TranslateResponse:
     return translation_service.translate(request)
 
 @router.get("/export/excel/{subject_id}")
-def export_excel(subject_id: int, db: Session = Depends(get_db)):
+def export_excel(subject_id: int, db: Session = Depends(get_db), current_user=Depends(require_auth)):
     subject = db.query(domain.Subject).filter(domain.Subject.id == subject_id).first()
     if not subject:
-        raise HTTPException(status_code=404, detail="Matière introuvable")
+        raise HTTPException(status_code=404, detail="Subject not found")
         
-    klass = db.query(domain.Class).filter(domain.Class.id == subject.class_id).first()
-    class_name = klass.name if klass else "Inconnue"
+    course_class = db.query(domain.Class).filter(domain.Class.id == subject.class_id).first()
+    class_name = course_class.name if course_class else "Unknown"
     
     submissions = db.query(domain.Submission).filter(domain.Submission.subject_id == subject_id).all()
     
     excel_file = ExportService.generate_excel(submissions, subject, class_name)
     
     headers = {
-        'Content-Disposition': f'attachment; filename="notes_{subject.name.replace(" ", "_")}.xlsx"'
+        'Content-Disposition': f'attachment; filename="grades_{subject.name.replace(" ", "_")}.xlsx"'
     }
     
     return StreamingResponse(
