@@ -75,9 +75,15 @@ class GLMOCRClient:
             logger.error(f"OCR evaluation failed completely after retries: {str(e)}", exc_info=True)
             raise
 
-        answers = self._extract_answers(raw_text)
+        student_id, student_name, answers = self._parse_ocr_raw_text(raw_text)
         confidence = 0.85 # Assume high base confidence for HF service
-        return OCRResult(raw_text=raw_text, confidence=confidence, extracted_answers=answers)
+        return OCRResult(
+            raw_text=raw_text, 
+            confidence=confidence, 
+            student_id=student_id,
+            student_name=student_name,
+            extracted_answers=answers
+        )
 
     @staticmethod
     def _clean_base64(payload: str) -> str:
@@ -96,22 +102,45 @@ class GLMOCRClient:
         return payload
 
     @staticmethod
-    def _extract_answers(raw_text: str) -> List[str]:
+    def _parse_ocr_raw_text(raw_text: str) -> tuple[str | None, str | None, dict[str, str]]:
         """
-        Extracts potential answers from the raw returned string by splitting on common delimiters.
-
-        Args:
-            raw_text (str): The raw multiline string from the OCR model.
+        Parses OCR raw text expecting a typical template.
+        Identifies ID (matricule), Name, and answers in `1 A` format.
 
         Returns:
-            List[str]: A list of possible extracted answers.
+            Tuple: (student_id, student_name, { "question_number": "answer" })
         """
+        student_id: str | None = None
+        student_name: str | None = None
+        answers: dict[str, str] = {}
+
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-        answers: List[str] = []
+
         for line in lines:
-            match = re.split(r"[:|]", line, maxsplit=1)
-            if len(match) == 2:
-                answers.append(match[1].strip())
-            else:
-                answers.append(line)
-        return answers
+            line_upper = line.upper()
+            # Try to match ID (matricule)
+            if re.match(r"^(?:ID|MATRICULE|CNE|APOGEE)[\s:]*(.+)$", line_upper):
+                match = re.match(r"^(?:ID|MATRICULE|CNE|APOGEE)[\s:]+(.+)$", line, flags=re.IGNORECASE)
+                if match:
+                    student_id = match.group(1).strip()
+                continue
+            
+            # Try to match Name
+            if re.match(r"^(?:NOM|NAME|PRENOM|ETUDIANT)[\s:]*(.+)$", line_upper):
+                match = re.match(r"^(?:NOM|NAME|PRENOM|ETUDIANT)[\w\s]*[\s:]+(.+)$", line, flags=re.IGNORECASE)
+                if match:
+                    student_name = match.group(1).strip()
+                continue
+
+            # Match question number patterns like "1 A", "1: B", "1 - C", "1. D"
+            # Captures question number and the answer part
+            match_answer = re.match(r"^(\d+)[\s:\|\.\-]+(.*)$", line)
+            if match_answer:
+                q_num = str(int(match_answer.group(1))) # Normalize number, e.g. '01' to '1'
+                ans = match_answer.group(2).strip()
+                # Store answer (might be multiple chars, keep it raw, could be "A" or "True")
+                answers[q_num] = ans
+                continue
+
+        # If name is not found using the labels, leave it as None (user handles it)
+        return student_id, student_name, answers

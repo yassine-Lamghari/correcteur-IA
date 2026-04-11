@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -11,6 +11,25 @@ class BaseSchema(BaseModel):
     """
     class Config:
         from_attributes = True
+
+# --- Exam Generation Schemas ---
+
+class ExamGenerationRequest(BaseModel):
+    course_content: str = Field(..., description="Le cours ou le texte d'entrée pour générer le QCM.")
+    instructions: str = Field(default="", description="Consignes pour l'examen")
+    num_questions: int = Field(default=10, ge=1, le=50)
+
+class ExamQuestion(BaseModel):
+    id: int
+    question: str
+    option_A: str
+    option_B: str
+    option_C: str
+    option_D: str
+    correct_answer: str = Field(..., description="La lettre de la bonne réponse (A, B, C ou D)")
+
+class ExamResponse(BaseModel):
+    questions: List[ExamQuestion]
 
 class UserBase(BaseSchema):
     username: str = Field(..., min_length=3, max_length=50)
@@ -52,9 +71,11 @@ class Subject(SubjectBase):
     class_id: int
 
 class SubmissionBase(BaseSchema):
+    student_id: Optional[str] = None
     student_name: str = Field(..., min_length=2, max_length=100)
     score: Optional[float] = Field(None, ge=0)
     feedback: Optional[str] = None
+    answers: Optional[Dict[str, str]] = None
 
 class SubmissionCreate(SubmissionBase):
     subject_id: int
@@ -94,7 +115,9 @@ class OCRRequest(BaseModel):
 class OCRResult(BaseModel):
     raw_text: str
     confidence: float = Field(..., ge=0, le=1)
-    extracted_answers: List[str] = Field(default_factory=list)
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    extracted_answers: Dict[str, str] = Field(default_factory=dict)
 
 
 class GradeRequest(BaseModel):
@@ -118,6 +141,19 @@ class FeedbackRequest(BaseModel):
 
 class FeedbackResponse(BaseModel):
     feedback: str
+
+
+class BatchGradeRequest(BaseModel):
+    correct_answers: Dict[str, str]
+    submissions: List[str]
+
+
+class BatchStudentResult(BaseModel):
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    score: float
+    answers: Dict[str, str]
+
 
 
 class TranslateRequest(BaseModel):

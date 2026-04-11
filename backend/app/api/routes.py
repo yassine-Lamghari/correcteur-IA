@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from typing import List
+from fastapi.responses import StreamingResponse
+from typing import List, Dict
 from datetime import timedelta
 
 from app.models import schemas, domain
@@ -13,13 +14,21 @@ from app.core.auth import (
     require_auth,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from app.services.pdf_generator import ExamPDFGenerator
 from app.models.schemas import (
+    BatchGradeRequest,
+    BatchStudentResult,
     FeedbackRequest,
     FeedbackResponse,
+    ExamGenerationRequest,
+    ExamResponse,
     GradeRequest,
     GradeResult,
     OCRRequest,
     OCRResult,
+    OCRTask,
+    QuestionSpec,
+    QuestionType,
     TranslateRequest,
     TranslateResponse,
     UserCreate,
@@ -79,7 +88,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def get_current_user(token_data: dict = Depends(require_auth), db: Session = Depends(get_db)):
     user = db.query(domain.User).filter(domain.User.username == token_data.get("sub")).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=401, detail="User not found")
     return user
 
 
@@ -132,30 +141,80 @@ ocr_client = GLMOCRClient()
 grading_service = GradingService()
 feedback_service = FeedbackService()
 translation_service = TranslationService()
+from app.services.gemini import GeminiCorrector
+gemini_service = GeminiCorrector()
 
 
 @router.post("/ocr", response_model=OCRResult)
-def ocr(request: OCRRequest, current_user=Depends(require_auth)) -> OCRResult:
+def ocr(request: OCRRequest, current_user=Depends(get_current_user)) -> OCRResult:
     return ocr_client.recognize(request.image_base64, request.task)
 
 
 @router.post("/grade", response_model=GradeResult)
-def grade(request: GradeRequest, current_user=Depends(require_auth)) -> GradeResult:
+def grade(request: GradeRequest, current_user=Depends(get_current_user)) -> GradeResult:
     return grading_service.grade(request.question, request.student_answer, use_llm=request.use_llm)
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
-def feedback(request: FeedbackRequest, current_user=Depends(require_auth)) -> FeedbackResponse:
+def feedback(request: FeedbackRequest, current_user=Depends(get_current_user)) -> FeedbackResponse:
     text = feedback_service.generate(request)
     return FeedbackResponse(feedback=text)
 
 
 @router.post("/translate", response_model=TranslateResponse)
-def translate(request: TranslateRequest, current_user=Depends(require_auth)) -> TranslateResponse:
+def translate(request: TranslateRequest, current_user=Depends(get_current_user)) -> TranslateResponse:
     return translation_service.translate(request)
 
+
+@router.post("/batch-grade", response_model=List[BatchStudentResult])
+def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_user)) -> List[BatchStudentResult]:
+    results = []
+
+    for image_b64 in request.submissions:
+        try:
+            # 1. OCR Extract
+            ocr_result = ocr_client.recognize(image_b64, OCRTask.text)
+
+            # 2. Grade
+            total_score = 0.0
+            student_answers = ocr_result.extracted_answers or {}
+
+            for q_num, expected_answer in request.correct_answers.items():
+                student_answer = student_answers.get(str(q_num), "")
+                if student_answer.strip():
+                    # Construct a mock QuestionSpec to evaluate this answer
+                    q_spec = QuestionSpec(
+                        question_id=str(q_num),
+                        type=QuestionType.short_answer,
+                        prompt=f"Question {q_num}",
+                        max_points=1.0,
+                        expected_answer=expected_answer,
+                        keywords=[expected_answer]
+                    )
+                    grade_res = grading_service.grade(q_spec, student_answer, use_llm=False)
+                    total_score += grade_res.awarded_points
+
+            # 3. Create Summary
+            results.append(BatchStudentResult(
+                student_id=ocr_result.student_id,
+                student_name=ocr_result.student_name,
+                score=total_score,
+                answers=student_answers
+            ))
+
+        except Exception as e:
+            # Add an empty/failed result in case of OCR or grading error for this submission
+            results.append(BatchStudentResult(
+                student_id=None,
+                student_name="Error Processing Submission",
+                score=0.0,
+                answers={}
+            ))
+
+    return results
+
 @router.get("/export/excel/{subject_id}")
-def export_excel(subject_id: int, db: Session = Depends(get_db), current_user=Depends(require_auth)):
+def export_excel(subject_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     subject = db.query(domain.Subject).filter(domain.Subject.id == subject_id).first()
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -176,3 +235,35 @@ def export_excel(subject_id: int, db: Session = Depends(get_db), current_user=De
         headers=headers,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+# --- Exam Generation Routes ---
+@router.post("/exams/generate", response_model=ExamResponse)
+def generate_exam(request: ExamGenerationRequest, current_user=Depends(get_current_user)):
+    """
+    Generate an MCQ exam based on the provided context.
+    """
+    try:
+        exam = gemini_service.generate_exam(request.course_content, request.instructions, request.num_questions)
+        return exam
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+@router.post("/exams/export-pdfs")
+def export_exam_pdfs(exam: ExamResponse):
+    """
+    Accepts the validated ExamResponse JSON and returns a ZIP containing 3 PDFs.
+    """
+    try:
+        zip_buffer = ExamPDFGenerator.create_exam_zip(exam)
+        headers = {
+            'Content-Disposition': 'attachment; filename="Examen_QCM_et_Reponses.zip"'
+        }
+        return StreamingResponse(
+            zip_buffer,
+            headers=headers,
+            media_type="application/zip"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF Generation error: {str(e)}")

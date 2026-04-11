@@ -17,9 +17,9 @@ class GradingService:
 
         # Option 1: Use exact/fuzzy matching based on expected_answer / keywords
         if question.type == QuestionType.mcq:
-            return self._grade_mcq(question, student_answer)
+            return self._grade_mcq(question, normalized_answer)
         if question.type == QuestionType.short_answer:
-            return self._grade_short(question, student_answer)
+            return self._grade_short(question, normalized_answer)
         return self._grade_essay(question, student_answer)
 
     def _grade_with_llm(self, question: QuestionSpec, student_answer: str) -> GradeResult:

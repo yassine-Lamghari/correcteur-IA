@@ -7,6 +7,8 @@ import google.generativeai as genai
 from json_repair import repair_json
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.models.schemas import ExamResponse
+
 logger = logging.getLogger("autograde")
 
 class GeminiCorrector:
@@ -102,3 +104,54 @@ class GeminiCorrector:
                 "feedback": f"AI evaluation error: {str(e)}",
                 "confidence": 0.0
             }
+
+    def generate_exam(self, course_content: str, instructions: str, num_questions: int) -> ExamResponse:
+        """
+        Uses Gemini to generate a structured MCQ exam from a given context.
+        """
+        system_prompt = f"""
+Tu es un professeur expert chargé de créer un examen QCM (Questions à Choix Multiples) à partir du texte/cours fourni.
+
+Consignes:
+- Génère exactement {num_questions} questions.
+- Chaque question doit comporter exactement 4 choix (A, B, C, D).
+- Chaque question doit avoir une et une seule bonne réponse, identifiée par sa lettre majuscule (A, B, C ou D).
+- La réponse doit être uniquement un JSON valide, sans bloc markdown Markdown ni texte avant ou après.
+
+Consignes du professeur :
+'''
+{instructions}
+'''
+
+Contexte du cours:
+'''
+{course_content}
+'''
+
+Format JSON strict attendu:
+{{
+  "questions": [
+    {{
+      "id": 1,
+      "question": "Texte de la question ?",
+      "option_A": "Choix 1",
+      "option_B": "Choix 2",
+      "option_C": "Choix 3",
+      "option_D": "Choix 4",
+      "correct_answer": "A"
+    }}
+  ]
+}}
+"""
+        response_text = self._call_gemini_api(system_prompt)
+        try:
+            # Parse the JSON and ensure it conforms to our model
+            data = repair_json(response_text, return_objects=True)
+            if not isinstance(data, dict) or "questions" not in data:
+                 raise ValueError("Structure JSON invalide (clé 'questions' absente)")
+            
+            validated_exam = ExamResponse.model_validate(data)
+            return validated_exam
+        except Exception as e:
+            logger.error(f"Erreur lors de la validation du modèle d'examen : {e}", exc_info=True)
+            raise ValueError(f"Impossible de parser la réponse de Gemini : {e}")

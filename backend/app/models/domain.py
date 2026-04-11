@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -52,9 +52,11 @@ class Submission(Base):
     __tablename__ = "submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(String, index=True, nullable=True)
     student_name = Column(String, index=True)
     score = Column(Float, nullable=True)
     feedback = Column(String, nullable=True)
+    answers = Column(JSON, nullable=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

@@ -20,3 +20,4 @@ python-json-logger
 tenacity
 email-validator
 psycopg2-binary
+fpdf2
