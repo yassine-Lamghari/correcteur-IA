@@ -182,14 +182,14 @@ def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_use
             for q_num, expected_answer in request.correct_answers.items():
                 student_answer = student_answers.get(str(q_num), "")
                 if student_answer.strip():
-                    # Construct a mock QuestionSpec to evaluate this answer
+                    # Use mcq type for MCQ answers (single-letter A/B/C/D)
                     q_spec = QuestionSpec(
                         question_id=str(q_num),
-                        type=QuestionType.short_answer,
+                        type=QuestionType.mcq,
                         prompt=f"Question {q_num}",
                         max_points=1.0,
-                        expected_answer=expected_answer,
-                        keywords=[expected_answer]
+                        expected_answer=expected_answer.strip(),
+                        keywords=[expected_answer.strip()]
                     )
                     grade_res = grading_service.grade(q_spec, student_answer, use_llm=False)
                     total_score += grade_res.awarded_points
@@ -199,7 +199,8 @@ def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_use
                 student_id=ocr_result.student_id,
                 student_name=ocr_result.student_name,
                 score=total_score,
-                answers=student_answers
+                answers=student_answers,
+                raw_text=ocr_result.raw_text
             ))
 
         except Exception as e:
@@ -208,7 +209,8 @@ def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_use
                 student_id=None,
                 student_name="Error Processing Submission",
                 score=0.0,
-                answers={}
+                answers={},
+                raw_text=str(e)
             ))
 
     return results
@@ -256,7 +258,8 @@ def export_exam_pdfs(exam: ExamResponse):
     Accepts the validated ExamResponse JSON and returns a ZIP containing 3 PDFs.
     """
     try:
-        zip_buffer = ExamPDFGenerator.create_exam_zip(exam)
+        exam_dict = exam.model_dump()
+        zip_buffer = ExamPDFGenerator.create_exam_zip(exam_dict)
         headers = {
             'Content-Disposition': 'attachment; filename="Examen_QCM_et_Reponses.zip"'
         }
@@ -266,4 +269,6 @@ def export_exam_pdfs(exam: ExamResponse):
             media_type="application/zip"
         )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF Generation error: {str(e)}")

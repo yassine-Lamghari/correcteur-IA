@@ -11,13 +11,17 @@ from app.models.schemas import ExamResponse
 
 logger = logging.getLogger("autograde")
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 class GeminiCorrector:
     """
     A service class for integrating with Google's Gemini API to evaluate and grade student answers.
     """
     def __init__(self):
         # Configure Gemini API key from environment variable
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel("gemini-2.5-flash")
     
@@ -104,6 +108,75 @@ class GeminiCorrector:
                 "feedback": f"AI evaluation error: {str(e)}",
                 "confidence": 0.0
             }
+
+    def extract_answers_from_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> Dict[str, Any]:
+        """
+        Uses Gemini's multimodal capabilities to extract student answers from a scanned exam image.
+        Much more reliable than Tesseract for handwritten text.
+
+        Args:
+            image_bytes (bytes): The raw image bytes.
+            mime_type (str): The MIME type of the image.
+
+        Returns:
+            Dict containing 'student_id', 'student_name', 'answers', 'confidence'.
+        """
+        if not os.environ.get("GEMINI_API_KEY"):
+            logger.warning("GEMINI_API_KEY not set, skipping Gemini OCR fallback")
+            return {"student_id": None, "student_name": None, "answers": {}, "confidence": 0.0}
+
+        prompt = """Tu es un assistant OCR spécialisé dans la lecture de feuilles de réponses d'examens QCM.
+
+Analyse cette image de copie d'examen et extrais :
+1. Le matricule/ID de l'étudiant (si visible)
+2. Le nom de l'étudiant (si visible)
+3. Les réponses aux questions QCM (numéro de question → lettre de réponse A/B/C/D)
+
+Attention : les réponses peuvent être manuscrites, cochées (■, [x], X), ou écrites à côté du numéro de question.
+
+Retourne UNIQUEMENT un objet JSON valide (pas de markdown, pas de texte avant/après) :
+{
+    "student_id": "string ou null",
+    "student_name": "string ou null",
+    "answers": {"1": "A", "2": "B", ...},
+    "confidence": 0.85
+}"""
+
+        try:
+            image_part = {
+                "mime_type": mime_type,
+                "data": image_bytes
+            }
+            response = self.model.generate_content([prompt, image_part])
+            text_response = response.text
+
+            # Clean markdown wrappers
+            if text_response.startswith("```json"):
+                text_response = text_response[7:]
+            if text_response.startswith("```"):
+                text_response = text_response[3:]
+            if text_response.endswith("```"):
+                text_response = text_response[:-3]
+
+            parsed = json.loads(repair_json(text_response.strip()))
+            answers = parsed.get("answers", {})
+            # Normalize answer keys to string numbers
+            normalized_answers = {}
+            for k, v in answers.items():
+                key = str(int(k)) if str(k).isdigit() else str(k)
+                val = str(v).strip().upper()
+                if val and len(val) <= 3:  # Accept "A", "AB", etc. but not long strings
+                    normalized_answers[key] = val
+
+            return {
+                "student_id": parsed.get("student_id"),
+                "student_name": parsed.get("student_name"),
+                "answers": normalized_answers,
+                "confidence": float(parsed.get("confidence", 0.8))
+            }
+        except Exception as e:
+            logger.error(f"Gemini image OCR failed: {str(e)}", exc_info=True)
+            return {"student_id": None, "student_name": None, "answers": {}, "confidence": 0.0}
 
     def generate_exam(self, course_content: str, instructions: str, num_questions: int) -> ExamResponse:
         """

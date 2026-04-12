@@ -5,6 +5,23 @@ from typing import List
 from fpdf import FPDF
 import logging
 
+def sanitize_text(text: str) -> str:
+    if not isinstance(text, str):
+        return str(text)
+    replacements = {
+        '‘': "'", '’': "'", '‚': "'", '‛': "'",
+        '“': '"', '”': '"', '„': '"', '‟': '"', '«': '"', '»': '"',
+        '–': '-', '—': '-', '−': '-',
+        '…': '...',
+        '€': 'EUR',
+        '•': '-', '◦': '-',
+        '✓': 'v', '✔': 'v',
+        '\u2028': '', '\u2029': ''
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text.encode('windows-1252', 'ignore').decode('windows-1252')
+
 class ExamPDFGenerator:
     """Service to generate the 3 PDFs: Exam Sheet, Blank Answer Sheet, and Correction Key."""
 
@@ -33,14 +50,17 @@ class ExamPDFGenerator:
         pdf.set_font("helvetica", size=11)
         for q in exam.get("questions", []):
             pdf.set_font("helvetica", style="B", size=11)
-            pdf.multi_cell(0, 8, f"Q{q['id']}. {q['question']}")
+            pdf.set_x(10)
+            clean_question = sanitize_text(str(q.get('question', '')))
+            clean_id = sanitize_text(str(q.get('id', '')))
+            pdf.multi_cell(0, 8, f"Q{clean_id}. {clean_question}")
             
             pdf.set_font("helvetica", size=11)
             options = {
-                "A": q['option_A'],
-                "B": q['option_B'],
-                "C": q['option_C'],
-                "D": q['option_D']
+                "A": sanitize_text(str(q.get('option_A', ''))),
+                "B": sanitize_text(str(q.get('option_B', ''))),
+                "C": sanitize_text(str(q.get('option_C', ''))),
+                "D": sanitize_text(str(q.get('option_D', '')))
             }
             for letter, text in options.items():
                 prefix = "[ X ] " if include_answers and q['correct_answer'].upper() == letter else "[   ] "
@@ -51,8 +71,10 @@ class ExamPDFGenerator:
                     pdf.set_text_color(0, 0, 0)
                     pdf.set_font("helvetica", size=11)
                 
-                pdf.cell(20, 8, f"  {prefix}{letter}) ", align="R")
-                pdf.multi_cell(0, 8, text)
+                # Combine prefix and text into a single multi_cell call to avoid fpdf horizontal space error
+                formatted_text = f"      {prefix}{letter}) {text}"
+                pdf.set_x(10)
+                pdf.multi_cell(0, 8, formatted_text)
             
             pdf.set_text_color(0, 0, 0)
             pdf.ln(5)

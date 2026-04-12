@@ -153,6 +153,7 @@ class BatchStudentResult(BaseModel):
     student_name: Optional[str] = None
     score: float
     answers: Dict[str, str]
+    raw_text: Optional[str] = None
 
 
 

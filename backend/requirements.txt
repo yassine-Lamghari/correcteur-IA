@@ -21,3 +21,7 @@ tenacity
 email-validator
 psycopg2-binary
 fpdf2
+
+pytesseract
+opencv-python
+Pillow

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import base64
+import os
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, simpledialog
+from tkinter import filedialog, messagebox, simpledialog
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+import requests
 
 from autograde_tk.api_client import AutoGradeApiClient
-
+from autograde_tk.ui.exam_tab import ExamTab
 
 class MainWindow(ttk.Frame):
-    def __init__(self, master: tk.Tk, client: AutoGradeApiClient) -> None:
-        super().__init__(master, padding=12)
+    def __init__(self, master: ttk.Window, client: AutoGradeApiClient) -> None:
+        super().__init__(master, padding=20)
         self.client = client
         self.selected_image_b64 = ""
 
         # Session State
-        self.current_teacher = None
         self.current_class = None
         self.current_subject = None
 
@@ -23,102 +26,214 @@ class MainWindow(ttk.Frame):
         self.student_answer = tk.StringVar(value="")
         self.use_llm = tk.BooleanVar(value=True)
 
-        self._build_ui()
-        self._load_teachers()
-
-    def _build_ui(self) -> None:
-        self.grid(sticky="nsew")
-
-        # --- Top Bar: Hierarchical Selectors ---
-        top_frame = ttk.LabelFrame(self, text="Contexte Professeur", padding=8)
-        top_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
-
-        ttk.Label(top_frame, text="Professeur:").grid(row=0, column=0, padx=4, sticky="e")
-        self.cb_teacher = ttk.Combobox(top_frame, state="readonly", width=15)
-        self.cb_teacher.grid(row=0, column=1, padx=4)
-        self.cb_teacher.bind("<<ComboboxSelected>>", self._on_teacher_selected)
+        self.grid(sticky="nsew", row=0, column=0)
+        self.master.columnconfigure(0, weight=1)
+        self.master.rowconfigure(0, weight=1)
         
-        ttk.Button(top_frame, text="+", width=3, command=self._add_teacher).grid(row=0, column=2, padx=2)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        
+        self._build_auth_ui()
 
-        ttk.Label(top_frame, text="Classe:").grid(row=0, column=3, padx=4, sticky="e")
-        self.cb_class = ttk.Combobox(top_frame, state="readonly", width=15)
-        self.cb_class.grid(row=0, column=4, padx=4)
+    def _build_auth_ui(self) -> None:
+        # Clear existing widgets
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        auth_frame = ttk.Frame(self, padding=20)
+        auth_frame.place(relx=0.5, rely=0.5, anchor="center")
+
+        title = ttk.Label(auth_frame, text="Authentification AutoGrade", font=("Helvetica", 16, "bold"), bootstyle="primary")
+        title.grid(row=0, column=0, columnspan=2, pady=(0, 20))
+
+        notebook = ttk.Notebook(auth_frame, bootstyle="secondary")
+        notebook.grid(row=1, column=0, columnspan=2, sticky="ew")
+
+        # --- Login Tab ---
+        login_tab = ttk.Frame(notebook, padding=20)
+        notebook.add(login_tab, text="Connexion")
+
+        ttk.Label(login_tab, text="Nom d'utilisateur :").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        self.login_user_var = tk.StringVar()
+        ttk.Entry(login_tab, textvariable=self.login_user_var, bootstyle="primary").grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        ttk.Label(login_tab, text="Mot de passe :").grid(row=2, column=0, sticky="w", pady=(0, 5))
+        self.login_pass_var = tk.StringVar()
+        ttk.Entry(login_tab, textvariable=self.login_pass_var, show="*", bootstyle="primary").grid(row=3, column=0, sticky="ew", pady=(0, 15))
+
+        ttk.Button(login_tab, text="Se connecter", command=self._do_login, bootstyle="success").grid(row=4, column=0, sticky="ew")
+
+        # --- Register Tab ---
+        register_tab = ttk.Frame(notebook, padding=20)
+        notebook.add(register_tab, text="Inscription")
+
+        ttk.Label(register_tab, text="Nom d'utilisateur :").grid(row=0, column=0, sticky="w", pady=(0, 2))
+        self.reg_user_var = tk.StringVar()
+        ttk.Entry(register_tab, textvariable=self.reg_user_var, bootstyle="primary").grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Label(register_tab, text="Email :").grid(row=2, column=0, sticky="w", pady=(0, 2))
+        self.reg_email_var = tk.StringVar()
+        ttk.Entry(register_tab, textvariable=self.reg_email_var, bootstyle="primary").grid(row=3, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Label(register_tab, text="Mot de passe :").grid(row=4, column=0, sticky="w", pady=(0, 2))
+        self.reg_pass_var = tk.StringVar()
+        ttk.Entry(register_tab, textvariable=self.reg_pass_var, show="*", bootstyle="primary").grid(row=5, column=0, sticky="ew", pady=(0, 10))
+
+        ttk.Button(register_tab, text="S'inscrire", command=self._do_register, bootstyle="info").grid(row=6, column=0, sticky="ew")
+
+    def _do_login(self) -> None:
+        user = self.login_user_var.get().strip()
+        pwd = self.login_pass_var.get()
+        if not user or not pwd:
+            messagebox.showwarning("Attention", "Veuillez remplir tous les champs.")
+            return
+        try:
+            self.client.login(user, pwd)
+            messagebox.showinfo("Succès", "Connexion réussie !")
+            self._show_app_ui()
+        except requests.exceptions.RequestException as e:
+            msg = str(e)
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 401:
+                msg = "Identifiants incorrects."
+            messagebox.showerror("Erreur", msg)
+
+    def _do_register(self) -> None:
+        user = self.reg_user_var.get().strip()
+        email = self.reg_email_var.get().strip()
+        pwd = self.reg_pass_var.get()
+        if not user or not email or not pwd:
+            messagebox.showwarning("Attention", "Veuillez remplir tous les champs.")
+            return
+            
+        try:
+            self.client.register(user, email, pwd)
+            messagebox.showinfo("Succès", "Inscription réussie ! Connexion automatique en cours...")
+            self.client.login(user, pwd)
+            self._show_app_ui()
+        except requests.exceptions.RequestException as e:
+            msg = str(e)
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code in [400, 422]:
+                if e.response.status_code == 422:
+                    msg = "Format de données invalide (vérifiez l'email et un mot de passe de >6 min)."
+                else:
+                    msg = e.response.json().get("detail", msg)
+            messagebox.showerror("Erreur", msg)
+
+    def _show_app_ui(self) -> None:
+        # Clear auth widgets
+        for widget in self.winfo_children():
+            widget.destroy()
+        
+        # Reset geometry behavior
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=0)  # top bar
+        self.rowconfigure(4, weight=1)  # log window
+
+        self._build_app_ui()
+        self._load_classes()
+
+    def _build_app_ui(self) -> None:
+        notebook = ttk.Notebook(self, bootstyle="primary")
+        notebook.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        
+        corrector_tab = ttk.Frame(notebook)
+        notebook.add(corrector_tab, text="✅ Correcteur Automatique")
+        
+        self.exam_tab = ExamTab(notebook, self.client)
+        notebook.add(self.exam_tab, text="📝 Générateur d'Examen")
+
+        self._build_corrector_ui(corrector_tab)
+
+    def _build_corrector_ui(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        # --- Top Bar: Hierarchical Selectors ---
+        top_frame = ttk.Labelframe(parent, text="Contexte Pédagogique", padding=15, bootstyle="info")
+        top_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 15))
+
+        ttk.Label(top_frame, text="Filière (Classe):", font=("Helvetica", 10, "bold")).grid(row=0, column=0, padx=5, sticky="e")
+        self.cb_class = ttk.Combobox(top_frame, state="readonly", width=20, bootstyle="primary")
+        self.cb_class.grid(row=0, column=1, padx=5)
         self.cb_class.bind("<<ComboboxSelected>>", self._on_class_selected)
         
-        ttk.Button(top_frame, text="+", width=3, command=self._add_class).grid(row=0, column=5, padx=2)
+        ttk.Button(top_frame, text="+", width=3, command=self._add_class, bootstyle="outline-primary").grid(row=0, column=2, padx=5)
 
-        ttk.Label(top_frame, text="Matière:").grid(row=0, column=6, padx=4, sticky="e")
-        self.cb_subject = ttk.Combobox(top_frame, state="readonly", width=15)
-        self.cb_subject.grid(row=0, column=7, padx=4)
+        ttk.Label(top_frame, text="Matière:", font=("Helvetica", 10, "bold")).grid(row=0, column=3, padx=10, sticky="e")
+        self.cb_subject = ttk.Combobox(top_frame, state="readonly", width=20, bootstyle="primary")
+        self.cb_subject.grid(row=0, column=4, padx=5)
         self.cb_subject.bind("<<ComboboxSelected>>", self._on_subject_selected)
         
-        ttk.Button(top_frame, text="+", width=3, command=self._add_subject).grid(row=0, column=8, padx=2)
+        ttk.Button(top_frame, text="+", width=3, command=self._add_subject, bootstyle="outline-primary").grid(row=0, column=5, padx=5)
 
-        # --- Middle Bar: Upload & OCR ---
-        mid_frame = ttk.LabelFrame(self, text="Nouvelle Copie", padding=8)
-        mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        # --- Batch Grading Configuration ---
+        batch_frame = ttk.Labelframe(parent, text="Configuration Batch Grading", padding=15, bootstyle="primary")
+        batch_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 15))
 
-        ttk.Label(mid_frame, text="Nom d'étudiant:").grid(row=0, column=0, sticky="e", padx=4)
-        ttk.Entry(mid_frame, textvariable=self.student_name, width=20).grid(row=0, column=1, sticky="w", padx=4)
+        top_inner = ttk.Frame(batch_frame)
+        top_inner.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
 
-        ttk.Button(mid_frame, text="Importer Scanner", command=self._select_file).grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=4)
-        ttk.Button(mid_frame, text="Extraire Texte (GLM OCR)", command=self._run_ocr).grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        ttk.Button(top_inner, text="Sélectionner l'Image(s) de l'Exam", command=self._select_images, bootstyle="warning").grid(row=0, column=0, sticky="w", padx=5)
+        self.lbl_images = ttk.Label(top_inner, text="Aucune image sélectionnée", font=("Helvetica", 10, "italic"))
+        self.lbl_images.grid(row=0, column=1, sticky="w", padx=10)
 
-        # --- Grading Section ---
-        grade_frame = ttk.LabelFrame(self, text="Correction & Édition", padding=8)
-        grade_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        ans_frame = ttk.Labelframe(batch_frame, text="Réponses Correctes (ex: 1 A, 2 B)", padding=10, bootstyle="secondary")
+        ans_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
         
-        ttk.Label(grade_frame, text="Consigne pour l'IA:").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.question_prompt = tk.Text(grade_frame, height=2, width=60, wrap="word")
-        self.question_prompt.insert(tk.END, "Veuillez corriger cette copie entière (QCM / Questions). Prenez en compte que l'élève a coché les cases avec '■'. Donnez la vraie note sur 20 !")
-        self.question_prompt.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.correct_answers_text = tk.Text(ans_frame, height=4, width=80, wrap="word", font=("Courier", 10))
+        self.correct_answers_text.grid(row=0, column=0, sticky="ew")
+        self.correct_answers_text.insert(tk.END, "1 A\n2 B\n3 C\n4 D")
 
-        ttk.Label(grade_frame, text="Réponse extraite:").grid(row=2, column=0, sticky="w", pady=(0, 4))
-        self.answer_text = tk.Text(grade_frame, height=4, width=60, wrap="word")
-        self.answer_text.grid(row=3, column=0, columnspan=3, sticky="ew")
+        ttk.Button(batch_frame, text="Lancer Batch Grading", command=self._run_batch, bootstyle="success").grid(row=2, column=0, columnspan=2, pady=10)
 
-        opt_frame = ttk.Frame(grade_frame)
-        opt_frame.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        # --- Data Grid for Results ---
+        grid_frame = ttk.Labelframe(parent, text="Résultats de Correction", padding=15, bootstyle="secondary")
+        grid_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(0, 15))
+        parent.rowconfigure(2, weight=1)
         
-        ttk.Radiobutton(opt_frame, text="Option 1 (Corrigé strict)", variable=self.use_llm, value=False).grid(row=0, column=0, padx=4)
-        ttk.Radiobutton(opt_frame, text="Option 2 (Intelligence Gemini sans corrigé)", variable=self.use_llm, value=True).grid(row=0, column=1, padx=4)
+        columns = ("ID", "Nom", "Note", "Réponses", "Classe", "Matière")
+        self.tree = ttk.Treeview(grid_frame, columns=columns, show="headings", height=8, bootstyle="info")
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, minwidth=80, width=120, anchor="center")
+        self.tree.grid(row=0, column=0, sticky="nsew")
         
-        btn_action_frame = ttk.Frame(grade_frame)
-        btn_action_frame.grid(row=5, column=0, columnspan=3, sticky="w", pady=8)
-        ttk.Button(btn_action_frame, text="Lancer la Correction", command=self._grade).grid(row=0, column=0, padx=4)
-        ttk.Button(btn_action_frame, text="Générer Feedback LLM", command=self._feedback).grid(row=0, column=1, padx=4)
-        ttk.Button(btn_action_frame, text="Enregistrer la Note !", command=self._save_submission).grid(row=0, column=2, padx=4)
+        # Text box for OCR extraction display
+        self.extraction_text = tk.Text(grid_frame, width=30, height=8, wrap="word", bg="#fcfcfc", font=("Consolas", 9))
+        self.extraction_text.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        
+        grid_frame.columnconfigure(0, weight=3)
+        grid_frame.columnconfigure(1, weight=1)
+        grid_frame.rowconfigure(0, weight=1)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(grid_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scrollbar.grid(row=0, column=2, sticky="ns")
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.bind("<Double-1>", self._on_double_click_tree)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        
+        btn_action_frame = ttk.Frame(grid_frame)
+        btn_action_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=10)
+        ttk.Button(btn_action_frame, text="Enregistrer les Notes !", command=self._save_submission, bootstyle="success").grid(row=0, column=0, padx=5)
 
         # --- Export Section ---
-        export_frame = ttk.Frame(self)
-        export_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 12))
-        ttk.Button(export_frame, text="Exporter les notes en Excel", command=self._export_excel).grid(row=0, column=0, sticky="w")
+        export_frame = ttk.Frame(parent)
+        export_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 15))
+        ttk.Button(export_frame, text="Exporter les notes en Excel", command=self._export_excel, bootstyle="outline-success").grid(row=0, column=0, sticky="w", padx=5)
 
         # --- Log Output ---
-        self.output = tk.Text(self, height=12, wrap="word")
-        self.output.grid(row=4, column=0, columnspan=3, sticky="nsew")
+        self.output = tk.Text(self, height=12, wrap="word", bg="#f0f0f0", font=("Consolas", 9))
+        self.output.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
 
     # --- Hierarchy Methods ---
-    def _load_teachers(self):
-        try:
-            self.teachers = self.client.get_teachers()
-            self.cb_teacher["values"] = [t["name"] for t in self.teachers]
-        except Exception as e:
-            self._append_output(f"Error loading teachers: {e}")
-
-    def _on_teacher_selected(self, event):
-        idx = self.cb_teacher.current()
-        if idx >= 0:
-            self.current_teacher = self.teachers[idx]
-            self._load_classes()
-
     def _load_classes(self):
-        if not self.current_teacher: return
         try:
-            self.classes = self.client.get_classes(self.current_teacher["id"])
+            self.classes = self.client.get_classes()
             self.cb_class["values"] = [c["name"] for c in self.classes]
             self.cb_class.set('')
             self.cb_subject.set('')
@@ -148,20 +263,10 @@ class MainWindow(ttk.Frame):
         if idx >= 0:
             self.current_subject = self.subjects[idx]
 
-    def _add_teacher(self):
-        name = simpledialog.askstring("Nouveau Professeur", "Nom du professeur:")
-        email = simpledialog.askstring("Nouveau Professeur", "Email:")
-        if name and email:
-            self.client.create_teacher(name, email)
-            self._load_teachers()
-
     def _add_class(self):
-        if not self.current_teacher:
-            messagebox.showwarning("Attention", "Sélectionnez un professeur d'abord.")
-            return
-        name = simpledialog.askstring("Nouvelle Classe", "Nom de la classe (ex: Math 101):")
+        name = simpledialog.askstring("Nouvelle Filière", "Nom de la filière/classe (ex: Math 101):")
         if name:
-            self.client.create_class(name, self.current_teacher["id"])
+            self.client.create_class(name)
             self._load_classes()
 
     def _add_subject(self):
@@ -173,113 +278,172 @@ class MainWindow(ttk.Frame):
             self.client.create_subject(name, self.current_class["id"])
             self._load_subjects()
 
-    # --- OCR, Grading & Actions ---
-    def _select_file(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Sélectionner une copie scannée",
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp")],
+    # --- Batch Grading Actions ---
+    def _select_images(self) -> None:
+        file_paths = filedialog.askopenfilenames(
+            title="Sélectionner l'image (ou les images) de l'examen",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp"), ("Tous les fichiers", "*.*")]
         )
-        if not path:
-            return
+        if file_paths:
+            self.selected_images = list(file_paths)
+            if len(self.selected_images) == 1:
+                self.lbl_images.config(text=f"1 image sélectionnée: {os.path.basename(self.selected_images[0])}")
+            else:
+                self.lbl_images.config(text=f"{len(self.selected_images)} images sélectionnées")
+            self._append_output(f"{len(self.selected_images)} image(s) sélectionnée(s)")
 
-        with open(path, "rb") as file:
-            self.selected_image_b64 = base64.b64encode(file.read()).decode("utf-8")
-        self._append_output(f"Fichier chargé: {path}")
-
-    def _run_ocr(self) -> None:
-        if not self.selected_image_b64:
-            messagebox.showwarning("Fichier manquant", "Veuillez importer une image.")
-            return
-        try:
-            self._append_output("Extraction OCR GLM en cours...")
-            result = self.client.ocr(self.selected_image_b64, "Text")
-            raw = result.get('raw_text', '')
-            self._append_output(f"Texte OCR brut :\n{raw}")
-            answers = result.get("extracted_answers", [])
+    def _parse_correct_answers(self) -> dict:
+        text = self.correct_answers_text.get("1.0", tk.END).strip()
+        answers = {}
+        if not text:
+            return answers
             
-            # fallback string
-            text_val = answers[0] if answers else raw
-            self.answer_text.delete("1.0", tk.END)
-            self.answer_text.insert(tk.END, text_val)
-        except Exception as exc:
-            messagebox.showerror("Erreur OCR GLM", str(exc))
+        lines = text.split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                q_id, ans = parts
+                answers[q_id] = ans
+        return answers
 
-    def _grade(self) -> None:
-        student_ans = self.answer_text.get("1.0", tk.END).strip()
-        current_prompt = self.question_prompt.get("1.0", tk.END).strip()
+    def _run_batch(self) -> None:
+        if not hasattr(self, "selected_images") or not self.selected_images:
+            messagebox.showwarning("Erreur", "Veuillez sélectionner au moins une image.")
+            return
+
+        if not self.current_subject:
+            messagebox.showwarning("Erreur", "Veuillez sélectionner une matière (cadre haut).")
+            return
+            
+        correct_answers = self._parse_correct_answers()
+        if not correct_answers:
+            messagebox.showwarning("Erreur", "Veuillez entrer les réponses correctes.")
+            return
+
+        # Read images
+        images_b64 = []
+        filenames = []
+        valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
         
-        if not student_ans:
-            messagebox.showwarning("Erreur", "Aucune réponse à corriger.")
+        for path in self.selected_images:
+            ext = os.path.splitext(path)[1].lower()
+            if ext in valid_exts or not ext:  # Allow even if ext is missing but selected via dialog
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                    images_b64.append(b64)
+                    filenames.append(os.path.basename(path))
+                    
+        if not images_b64:
+             messagebox.showinfo("Images Invalides", "Aucune image valide trouvée.")
+             return
+
+        self._append_output(f"Lancement du Batch Grading pour {len(images_b64)} copie(s)...")
+        try:
+            results = self.client.batch_grade(correct_answers, images_b64)
+            self._append_output("Batch terminé.")
+            
+            # Clear treeview
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+                
+            self.batch_results = []
+            
+            for i, res in enumerate(results):
+                student_id = res.get("student_id", "Unknown")
+                awarded = res.get("score", 0)  # Make sure we use 'score', not 'total_awarded' as it is 'score' in schema
+                answers = res.get("answers", {})
+                answers_str = ", ".join([f"{k}: {v}" for k, v in answers.items()])
+                raw_text = res.get("raw_text", "Aucun texte extrait disponible.")
+                
+                # Display in Treeview
+                # Let's save metadata for later save
+                item = {
+                    "student_id": student_id,
+                    "student_name": f"Élève_{student_id}",
+                    "score": awarded,
+                    "feedback": "Batch graded",
+                    "filename": filenames[i] if i < len(filenames) else "",
+                    "raw_text": raw_text
+                }
+                self.batch_results.append(item)
+                
+                self.tree.insert("", tk.END, values=(
+                    student_id,
+                    item["student_name"],
+                    item["score"],
+                    answers_str,
+                    self.current_class["name"] if self.current_class else "-",
+                    self.current_subject["name"] if self.current_subject else "-"
+                ))
+        except Exception as exc:
+            messagebox.showerror("Erreur Batch", str(exc))
+
+    def _on_tree_select(self, event):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item_id = selection[0]
+        values = self.tree.item(item_id, "values")
+        if not values:
             return
             
-        question = {
-            "question_id": "q1",
-            "type": "essay",
-            "prompt": current_prompt,
-            "max_points": 20,
-            "expected_answer": "",
-            "keywords": [],
-        }
+        student_id = values[0]
+        for r in self.batch_results:
+            if str(r.get("student_id")) == str(student_id):
+                self.extraction_text.delete("1.0", tk.END)
+                text = r.get("raw_text", "")
+                if text is None: text = "Aucun texte extrait."
+                self.extraction_text.insert(tk.END, text)
+                break
+                
+    def _on_double_click_tree(self, event):
+        item_id = self.tree.focus()
+        if not item_id: return
+        values = list(self.tree.item(item_id, "values"))
         
-        # If Option 1 without key:
-        if not self.use_llm.get():
-            question["keywords"] = ["MVC", "Backend", "Frontend", "Base de données", "API"]
-
+        new_score = simpledialog.askstring("Editer Note", f"Nouvelle note pour {values[1]}:", initialvalue=str(values[2]))
+        if new_score is None: return
         try:
-            self._append_output("Correction en cours avec " + ("Gemini" if self.use_llm.get() else "Barème Mots-Clés") + "...")
-            grade = self.client.grade(question, student_ans, use_llm=self.use_llm.get())
-            self._append_output(f"Résultat: {grade['awarded_points']} / 20. Confiance: {grade['confidence']}")
+            values[2] = float(new_score)
+            self.tree.item(item_id, values=values)
             
-            self.last_grade = grade
-            # Generate inline feedback immediately
-            if self.use_llm.get() and 'feedback' in grade:
-                 self.last_feedback = grade.get("feedback")
-        except Exception as exc:
-            messagebox.showerror("Erreur de Correction", str(exc))
-
-    def _feedback(self) -> None:
-        grade = getattr(self, "last_grade", None)
-        if not grade:
-            messagebox.showwarning("Erreur", "Veuillez corriger la copie en premier.")
-            return
-            
-        student_ans = self.answer_text.get("1.0", tk.END).strip()
-        current_prompt = self.question_prompt.get("1.0", tk.END).strip()
-        
-        question = {
-            "question_id": "q1",
-            "type": "essay",
-            "prompt": current_prompt,
-            "max_points": 20,
-        }
-
-        try:
-            self._append_output("Génération du feedback...")
-            result = self.client.feedback(question, student_ans, grade)
-            self.last_feedback = result.get("feedback", "")
-            self._append_output(f"Feedback LLM : {self.last_feedback}")
-        except Exception as exc:
-            messagebox.showerror("Erreur Feedback", str(exc))
+            # Update internal list
+            student_id = values[0]
+            for r in self.batch_results:
+                if str(r.get("student_id")) == str(student_id):
+                    r["score"] = float(new_score)
+                    break
+        except ValueError:
+            messagebox.showwarning("Note Invalide", "Veuillez entrer un nombre valide.")
 
     def _save_submission(self) -> None:
         if not self.current_subject:
             messagebox.showwarning("Erreur", "Veuillez sélectionner une matière.")
             return
             
-        if not hasattr(self, "last_grade"):
-            messagebox.showwarning("Erreur", "Aucune correction n'est prête à être enregistrée.")
+        if not hasattr(self, "batch_results") or not self.batch_results:
+            messagebox.showwarning("Erreur", "Aucune correction prête à enregistrer.")
             return
             
         try:
-            fb = getattr(self, "last_feedback", getattr(self, "last_grade", {}).get("feedback", ""))
-            score = float(self.last_grade.get("awarded_points", 0))
-            self.client.create_submission(
-                student_name=self.student_name.get(),
-                score=score,
-                feedback=fb,
-                subject_id=self.current_subject["id"]
-            )
-            self._append_output(f"✅ Note de {self.student_name.get()} enregistrée avec succès ({score} pts) dans la matière {self.current_subject['name']}.")
+            for item in self.tree.get_children():
+                vals = self.tree.item(item, "values")
+                student_id = vals[0]
+                student_name = vals[1]
+                score = float(vals[2])
+                
+                self.client.create_submission(
+                    student_name=student_name,
+                    score=score,
+                    feedback="Batch",
+                    subject_id=self.current_subject["id"]
+                )
+            self._append_output(f"✅ {len(self.tree.get_children())} notes enregistrées.")
+            self.batch_results = []
+            
         except Exception as exc:
             messagebox.showerror("Erreur Sauvegarde", str(exc))
 
