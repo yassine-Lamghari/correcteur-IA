@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_ocr.py)",
+      "Bash(pip install:*)",
+      "Bash(python -m pip install pytesseract opencv-python pillow)",
+      "Bash(tasklist)",
+      "Bash(findstr python:*)",
+      "Bash(python -m pip install pytesseract opencv-python pillow --no-cache-dir)",
+      "Bash(tesseract:*)",
+      "Bash(C:\\\\Program Files\\\\Tesseract-OCR\\\\tesseract.exe:*)",
+      "Bash(python test_ocr_with_image.py)",
+      "Bash(findstr 8000)",
+      "Bash(python test_api_ocr.py)",
+      "Bash(python create_test_user.py)",
+      "Bash(python test_server_ocr.py)",
+      "Bash(python test_real_image.py)",
+      "Bash(python -m uvicorn app.main:app --reload --port 8000)"
+    ]
+  }
+}

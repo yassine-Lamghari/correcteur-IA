@@ -178,6 +178,9 @@ def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_use
             # 2. Grade
             total_score = 0.0
             student_answers = ocr_result.extracted_answers or {}
+            
+            num_questions = len(request.correct_answers)
+            point_per_question = 20.0 / num_questions if num_questions > 0 else 0.0
 
             for q_num, expected_answer in request.correct_answers.items():
                 student_answer = student_answers.get(str(q_num), "")
@@ -187,12 +190,14 @@ def batch_grade(request: BatchGradeRequest, current_user=Depends(get_current_use
                         question_id=str(q_num),
                         type=QuestionType.mcq,
                         prompt=f"Question {q_num}",
-                        max_points=1.0,
+                        max_points=point_per_question,
                         expected_answer=expected_answer.strip(),
                         keywords=[expected_answer.strip()]
                     )
                     grade_res = grading_service.grade(q_spec, student_answer, use_llm=False)
                     total_score += grade_res.awarded_points
+
+            total_score = round(total_score, 2)
 
             # 3. Create Summary
             results.append(BatchStudentResult(

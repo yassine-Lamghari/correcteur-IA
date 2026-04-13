@@ -1,70 +1,71 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import ttkbootstrap as ttk
+from tkinter import messagebox, filedialog
 import threading
 
 class ExamTab(ttk.Frame):
     def __init__(self, parent, api_client):
-        super().__init__(parent)
+        super().__init__(parent, padding=10)
         self.api_client = api_client
         self.current_exam = None
         self._build_ui()
 
     def _build_ui(self):
         # Top Frame: Input Context
-        top_frame = ttk.LabelFrame(self, text="Paramètres de l'Examen", padding=10)
-        top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        top_frame = ttk.Labelframe(self, text="Paramètres de l'Examen", padding=15, bootstyle="info")
+        top_frame.pack(side=tk.TOP, fill="x", pady=(0, 15))
 
-        ttk.Label(top_frame, text="Nombre de questions :").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(top_frame, text="Nombre de questions :", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=5)
         self.num_q_var = tk.IntVar(value=10)
-        ttk.Spinbox(top_frame, from_=1, to_=50, textvariable=self.num_q_var, width=5).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Spinbox(top_frame, from_=1, to_=50, textvariable=self.num_q_var, width=8, bootstyle="primary").grid(row=0, column=1, sticky="w", pady=5, padx=10)
 
         self.course_content = ""
 
-        ttk.Label(top_frame, text="Support de cours (PDF) :").grid(row=1, column=0, sticky=tk.NW, pady=5)
+        ttk.Label(top_frame, text="Support de cours (PDF) :", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="nw", pady=10)
         
         pdf_frame = ttk.Frame(top_frame)
-        pdf_frame.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=5)
+        pdf_frame.grid(row=1, column=1, sticky="ew", pady=10, padx=10)
         
-        self.pdf_label = ttk.Label(pdf_frame, text="Aucun fichier sélectionné")
+        self.pdf_label = ttk.Label(pdf_frame, text="Aucun fichier sélectionné", font=("Segoe UI", 10, "italic"))
         self.pdf_label.pack(side=tk.LEFT, padx=(0, 10))
         
-        ttk.Button(pdf_frame, text="Parcourir...", command=self._import_pdf).pack(side=tk.LEFT)
+        ttk.Button(pdf_frame, text="Parcourir...", command=self._import_pdf, bootstyle="outline-primary").pack(side=tk.LEFT)
 
-        ttk.Label(top_frame, text="Consigne à Gemini :").grid(row=2, column=0, sticky=tk.NW, pady=5)
+        ttk.Label(top_frame, text="Consigne à Gemini :", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="nw", pady=5)
         self.instructions_text = tk.Text(top_frame, height=5, width=80, font=("Segoe UI", 10))
-        self.instructions_text.grid(row=2, column=1, pady=5, padx=5, sticky=tk.EW)
+        self.instructions_text.grid(row=2, column=1, pady=5, padx=10, sticky="ew")
         
-        btn_generate = ttk.Button(top_frame, text="✨ Générer le QCM via Gemini", command=self._generate_exam)
-        btn_generate.grid(row=3, column=1, sticky=tk.E, pady=5)
+        btn_generate = ttk.Button(top_frame, text="✨ Générer le QCM via Gemini", command=self._generate_exam, bootstyle="success", cursor="hand2")
+        btn_generate.grid(row=3, column=1, sticky="e", pady=5, padx=10)
 
         # Middle Frame: Treeview to display and edit questions
-        mid_frame = ttk.LabelFrame(self, text="Questions Générées (Double-cliquez pour modifier)", padding=10)
-        mid_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
+        mid_frame = ttk.Labelframe(self, text="Questions Générées (Double-cliquez pour modifier)", padding=15, bootstyle="secondary")
+        mid_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=10)
 
         columns = ("ID", "Question", "A", "B", "C", "D", "Réponse")
-        self.tree = ttk.Treeview(mid_frame, columns=columns, show="headings", height=10)
+        self.tree = ttk.Treeview(mid_frame, columns=columns, show="headings", height=10, bootstyle="info")
         for col in columns:
             self.tree.heading(col, text=col)
             if col == "ID":
-                self.tree.column(col, width=30, anchor="center")
+                self.tree.column(col, width=40, anchor="center")
             elif col == "Réponse":
-                self.tree.column(col, width=60, anchor="center")
+                self.tree.column(col, width=80, anchor="center")
             else:
                 self.tree.column(col, width=150)
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         scrollbar = ttk.Scrollbar(mid_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscroll=scrollbar.set)
+        self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.bind("<Double-1>", self._on_double_click)
 
         # Bottom Frame: Export options
-        bot_frame = ttk.Frame(self)
-        bot_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        bot_frame = ttk.Frame(self, padding=10)
+        bot_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.btn_export = ttk.Button(bot_frame, text="📥 Valider l'Examen et Sauvegarder les PDFs", state=tk.DISABLED, command=self._export_pdfs)
+        self.btn_export = ttk.Button(bot_frame, text="📥 Sauvegarder les PDFs et Base de Données", state=tk.DISABLED, command=self._export_pdfs, bootstyle="primary", cursor="hand2")
         self.btn_export.pack(side=tk.RIGHT)
 
     def _import_pdf(self):
