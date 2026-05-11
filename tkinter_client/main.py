@@ -19,7 +19,7 @@ def run() -> None:
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
 
-    client = AutoGradeApiClient(base_url="http://127.0.0.1:8000")
+    client = AutoGradeApiClient(base_url="http://127.0.0.1:8080")
     MainWindow(root, client)
 
     root.mainloop()

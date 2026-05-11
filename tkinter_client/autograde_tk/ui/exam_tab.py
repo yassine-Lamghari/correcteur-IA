@@ -38,6 +38,12 @@ class ExamTab(ttk.Frame):
         btn_generate = ttk.Button(top_frame, text="✨ Générer le QCM via Gemini", command=self._generate_exam, bootstyle="success", cursor="hand2")
         btn_generate.grid(row=3, column=1, sticky="e", pady=5, padx=10)
 
+        # Bottom Frame: Export options (Pack it BEFORE the middle frame so it's always visible!)
+        bot_frame = ttk.Frame(self, padding=10)
+        bot_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        self.btn_export = ttk.Button(bot_frame, text="📥 Sauvegarder les PDFs et Base de Données", state=tk.DISABLED, command=self._export_pdfs, bootstyle="primary", cursor="hand2")
+        self.btn_export.pack(side=tk.RIGHT)
+
         # Middle Frame: Treeview to display and edit questions
         mid_frame = ttk.Labelframe(self, text="Questions Générées (Double-cliquez pour modifier)", padding=15, bootstyle="secondary")
         mid_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=10)
@@ -60,13 +66,6 @@ class ExamTab(ttk.Frame):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.bind("<Double-1>", self._on_double_click)
-
-        # Bottom Frame: Export options
-        bot_frame = ttk.Frame(self, padding=10)
-        bot_frame.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.btn_export = ttk.Button(bot_frame, text="📥 Sauvegarder les PDFs et Base de Données", state=tk.DISABLED, command=self._export_pdfs, bootstyle="primary", cursor="hand2")
-        self.btn_export.pack(side=tk.RIGHT)
 
     def _import_pdf(self):
         filepath = filedialog.askopenfilename(
@@ -130,7 +129,10 @@ class ExamTab(ttk.Frame):
             ))
 
     def _on_double_click(self, event):
-        item = self.tree.selection()[0]
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item = selection[0]
         column = self.tree.identify_column(event.x)
         col_idx = int(column.replace('#', '')) - 1
         

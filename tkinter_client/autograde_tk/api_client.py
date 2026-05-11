@@ -4,7 +4,7 @@ import requests
 
 
 class AutoGradeApiClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8000") -> None:
+    def __init__(self, base_url: str = "http://127.0.0.1:8080") -> None:
         self.base_url = base_url.rstrip("/")
         self.token = None
         self.username = None
