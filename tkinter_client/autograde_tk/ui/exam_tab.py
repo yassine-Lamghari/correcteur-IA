@@ -2,6 +2,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from tkinter import messagebox, filedialog
 import threading
+from autograde_tk.ui.theme import get_theme
 
 class ExamTab(ttk.Frame):
     def __init__(self, parent, api_client):
@@ -11,28 +12,29 @@ class ExamTab(ttk.Frame):
         self._build_ui()
 
     def _build_ui(self):
+        theme = get_theme(self)
         # Top Frame: Input Context
         top_frame = ttk.Labelframe(self, text="Paramètres de l'Examen", padding=15, bootstyle="info")
         top_frame.pack(side=tk.TOP, fill="x", pady=(0, 15))
 
-        ttk.Label(top_frame, text="Nombre de questions :", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(top_frame, text="Nombre de questions :", font=theme.base_bold).grid(row=0, column=0, sticky="w", pady=5)
         self.num_q_var = tk.IntVar(value=10)
         ttk.Spinbox(top_frame, from_=1, to_=50, textvariable=self.num_q_var, width=8, bootstyle="primary").grid(row=0, column=1, sticky="w", pady=5, padx=10)
 
         self.course_content = ""
 
-        ttk.Label(top_frame, text="Support de cours (PDF) :", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="nw", pady=10)
+        ttk.Label(top_frame, text="Support de cours (PDF) :", font=theme.base_bold).grid(row=1, column=0, sticky="nw", pady=10)
         
         pdf_frame = ttk.Frame(top_frame)
         pdf_frame.grid(row=1, column=1, sticky="ew", pady=10, padx=10)
         
-        self.pdf_label = ttk.Label(pdf_frame, text="Aucun fichier sélectionné", font=("Segoe UI", 10, "italic"))
+        self.pdf_label = ttk.Label(pdf_frame, text="Aucun fichier sélectionné", font=theme.small)
         self.pdf_label.pack(side=tk.LEFT, padx=(0, 10))
         
         ttk.Button(pdf_frame, text="Parcourir...", command=self._import_pdf, bootstyle="outline-primary").pack(side=tk.LEFT)
 
-        ttk.Label(top_frame, text="Consigne à Gemini :", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="nw", pady=5)
-        self.instructions_text = tk.Text(top_frame, height=5, width=80, font=("Segoe UI", 10))
+        ttk.Label(top_frame, text="Consigne à Gemini :", font=theme.base_bold).grid(row=2, column=0, sticky="nw", pady=5)
+        self.instructions_text = tk.Text(top_frame, height=5, width=80, font=theme.base)
         self.instructions_text.grid(row=2, column=1, pady=5, padx=10, sticky="ew")
         
         btn_generate = ttk.Button(top_frame, text="✨ Générer le QCM via Gemini", command=self._generate_exam, bootstyle="success", cursor="hand2")
@@ -104,12 +106,10 @@ class ExamTab(ttk.Frame):
 
         def task():
             try:
-                self.current_exam = self.api_client.generate_exam(self.course_content, instructions, num_questions)
-                self._populate_tree()
-                self.btn_export.config(state=tk.NORMAL)
-                messagebox.showinfo("Succès", "Examen généré avec succès !")
+                data = self.api_client.generate_exam(self.course_content, instructions, num_questions)
+                self.after(0, lambda: self._on_exam_generated(data))
             except Exception as e:
-                messagebox.showerror("Erreur", f"Erreur lors de la génération : {e}")
+                self.after(0, lambda err=e: self._on_exam_error(err))
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -188,8 +188,17 @@ class ExamTab(ttk.Frame):
                 zip_bytes = self.api_client.export_exam_pdfs(self.current_exam)
                 with open(filepath, "wb") as f:
                     f.write(zip_bytes)
-                messagebox.showinfo("Export Réussi", f"Fichiers enregistrés dans : {filepath}")
+                self.after(0, lambda: messagebox.showinfo("Export Réussi", f"Fichiers enregistrés dans : {filepath}"))
             except Exception as e:
-                messagebox.showerror("Erreur d'export", f"Impossible d'exporter les PDF : {e}")
+                self.after(0, lambda: messagebox.showerror("Erreur d'export", f"Impossible d'exporter les PDF : {e}"))
                 
         threading.Thread(target=task, daemon=True).start()
+
+    def _on_exam_generated(self, data: dict) -> None:
+        self.current_exam = data
+        self._populate_tree()
+        self.btn_export.config(state=tk.NORMAL)
+        messagebox.showinfo("Succès", "Examen généré avec succès !")
+
+    def _on_exam_error(self, error: Exception) -> None:
+        messagebox.showerror("Erreur", f"Erreur lors de la génération : {error}")

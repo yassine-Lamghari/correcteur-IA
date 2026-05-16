@@ -18,7 +18,6 @@ app = FastAPI(
     description="Shared backend for Tkinter and WinForms clients. Handles OCR extraction, intelligent grading, and generation of feedback.",
     contact={
         "name": "AutoGrade Support",
-        "email": "support@autograde.local",
     }
 )
 
@@ -44,4 +43,6 @@ def health() -> dict:
         "status": "ok",
         "service": settings.service_name,
         "glm_provider": settings.glm_provider,
+        # Aide au débogage : si absent, le client pointe vers un backend trop ancien (404 sur /courses/*).
+        "api_features": {"courses_generate": True, "exams_generate": True},
     }

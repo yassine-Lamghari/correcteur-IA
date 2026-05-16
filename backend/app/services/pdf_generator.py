@@ -128,3 +128,92 @@ class ExamPDFGenerator:
         
         zip_buffer.seek(0)
         return zip_buffer
+
+
+class CoursePDFGenerator:
+    """PDF d'un cours généré (contenu Markdown simplifié pour l'impression)."""
+
+    @staticmethod
+    def _strip_inline_md(text: str) -> str:
+        t = text.replace("**", "").replace("__", "")
+        if t.startswith("- "):
+            t = "• " + t[2:]
+        return t
+
+    @staticmethod
+    def render_markdown_to_pdf(title: str, markdown_body: str) -> bytes:
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        pdf.set_font("helvetica", style="B", size=14)
+        pdf.cell(0, 10, sanitize_text("Université Moulay Ismaïl - ENSAM Meknès"), ln=True, align="C")
+        pdf.set_font("helvetica", style="B", size=16)
+        pdf.multi_cell(0, 10, sanitize_text(title or "Cours"))
+        pdf.ln(4)
+
+        lines = (markdown_body or "").splitlines()
+        in_code = False
+        code_buf: List[str] = []
+
+        def flush_code() -> None:
+            nonlocal code_buf
+            if not code_buf:
+                return
+            pdf.set_font("courier", size=9)
+            block = "\n".join(code_buf)
+            pdf.multi_cell(0, 5, sanitize_text(block))
+            pdf.ln(2)
+            code_buf = []
+            pdf.set_font("helvetica", size=11)
+
+        i = 0
+        while i < len(lines):
+            raw = lines[i]
+            stripped = raw.strip()
+
+            if stripped.startswith("```"):
+                if in_code:
+                    flush_code()
+                    in_code = False
+                else:
+                    in_code = True
+                i += 1
+                continue
+
+            if in_code:
+                code_buf.append(raw)
+                i += 1
+                continue
+
+            if not stripped:
+                pdf.ln(2)
+                i += 1
+                continue
+
+            if stripped.startswith("# "):
+                pdf.set_font("helvetica", style="B", size=15)
+                pdf.multi_cell(0, 8, sanitize_text(CoursePDFGenerator._strip_inline_md(stripped[2:].strip())))
+                pdf.ln(2)
+            elif stripped.startswith("## "):
+                pdf.set_font("helvetica", style="B", size=13)
+                pdf.multi_cell(0, 7, sanitize_text(CoursePDFGenerator._strip_inline_md(stripped[3:].strip())))
+                pdf.ln(1)
+            elif stripped.startswith("### "):
+                pdf.set_font("helvetica", style="B", size=11)
+                pdf.multi_cell(0, 6, sanitize_text(CoursePDFGenerator._strip_inline_md(stripped[4:].strip())))
+                pdf.ln(1)
+            elif stripped.startswith(("- ", "* ", "• ")):
+                pdf.set_font("helvetica", size=11)
+                pdf.multi_cell(0, 6, sanitize_text(CoursePDFGenerator._strip_inline_md(stripped)))
+                pdf.ln(0.5)
+            else:
+                pdf.set_font("helvetica", size=11)
+                pdf.multi_cell(0, 6, sanitize_text(CoursePDFGenerator._strip_inline_md(stripped)))
+                pdf.ln(0.5)
+
+            i += 1
+
+        if in_code and code_buf:
+            flush_code()
+
+        return pdf.output(dest="S")

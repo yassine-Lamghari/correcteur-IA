@@ -51,8 +51,16 @@ class GLMOCRClient:
         Returns:
             OCRResult: An object containing raw text, confidence score, and extracted lines.
         """
+        image_quality = None
         try:
             clean_b64 = self._clean_base64(image_base64)
+            image_bytes = base64.b64decode(clean_b64)
+            image = Image.open(BytesIO(image_bytes))
+            image = self._auto_crop(image)
+            image = self._auto_rotate(image)
+            image_bytes = self._encode_image(image)
+            clean_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            image_quality = self._estimate_image_quality(image_bytes)
             # Find extension if possible or default to jpeg
             b64_with_prefix = f"data:image/jpeg;base64,{clean_b64}"
             
@@ -133,7 +141,8 @@ class GLMOCRClient:
             confidence=confidence,
             student_id=student_id,
             student_name=student_name,
-            extracted_answers=answers
+            extracted_answers=answers,
+            image_quality=image_quality,
         )
 
     @staticmethod
@@ -176,6 +185,47 @@ class GLMOCRClient:
         if "," in payload:
             return payload.split(",", 1)[1]
         return payload
+
+    @staticmethod
+    def _estimate_image_quality(image_bytes: bytes) -> float | None:
+        try:
+            image = Image.open(BytesIO(image_bytes)).convert("L")
+            img_array = np.array(image)
+            lap_var = cv2.Laplacian(img_array, cv2.CV_64F).var()
+            normalized = min(lap_var / 1000.0, 1.0)
+            return round(float(normalized), 3)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _auto_rotate(image: Image.Image) -> Image.Image:
+        try:
+            osd = pytesseract.image_to_osd(image)
+            match = re.search(r"Rotate: (\d+)", osd)
+            angle = int(match.group(1)) if match else 0
+            if angle:
+                return image.rotate(-angle, expand=True)
+        except Exception:
+            pass
+        return image
+
+    @staticmethod
+    def _auto_crop(image: Image.Image) -> Image.Image:
+        try:
+            gray = image.convert("L")
+            thresh = gray.point(lambda p: 0 if p > 245 else 255, "1")
+            bbox = thresh.getbbox()
+            if bbox:
+                return image.crop(bbox)
+        except Exception:
+            pass
+        return image
+
+    @staticmethod
+    def _encode_image(image: Image.Image) -> bytes:
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue()
 
     @staticmethod
     def _parse_ocr_raw_text(raw_text: str) -> tuple[str | None, str | None, dict[str, str]]:
