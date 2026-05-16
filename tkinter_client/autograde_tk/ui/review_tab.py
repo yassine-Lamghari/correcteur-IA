@@ -132,7 +132,8 @@ class ReviewTab(ttk.Frame):
         if not item:
             return
         self.raw_text.delete("1.0", tk.END)
-        self.raw_text.insert(tk.END, item.get("raw_text") or "")
+        text = self._clean_ocr_text(item.get("raw_text") or "")
+        self.raw_text.insert(tk.END, text or "Aucun texte OCR.")
 
     def _mark_resolved(self) -> None:
         selection = self.tree.selection()
@@ -152,3 +153,9 @@ class ReviewTab(ttk.Frame):
             return f"{float(value):.2f}"
         except (TypeError, ValueError):
             return str(value)
+
+    def _clean_ocr_text(self, text: str) -> str:
+        if not text:
+            return ""
+        lines = [line for line in text.splitlines() if not line.strip().startswith("[INFO]")]
+        return "\n".join(lines).strip()

@@ -118,7 +118,7 @@ class GLMOCRClient:
                         student_name = gemini_result["student_name"]
                     answers = gemini_result["answers"]
                     confidence = gemini_result.get("confidence", 0.8)
-                    raw_text += f"\n\n[INFO] {len(answers)} réponses extraites via Gemini (fallback OCR)."
+                    logger.info(f"[DEBUG] Gemini fallback extracted {len(answers)} answers")
                 else:
                     logger.warning("[DEBUG] Gemini fallback also found no answers")
                     confidence = 0.3

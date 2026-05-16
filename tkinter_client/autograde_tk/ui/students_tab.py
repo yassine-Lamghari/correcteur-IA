@@ -1,5 +1,6 @@
 import csv
 import tkinter as tk
+import unicodedata
 from tkinter import filedialog, messagebox
 import ttkbootstrap as ttk
 
@@ -73,6 +74,29 @@ class StudentsTab(ttk.Frame):
         self.current_class = self.classes[idx]
         self._refresh_students()
 
+    def refresh_for_class(self, class_id: int | None) -> None:
+        if class_id is None:
+            return
+        if not self.classes:
+            try:
+                self.classes = self.api_client.get_classes()
+                self.cb_class["values"] = [c["name"] for c in self.classes]
+            except Exception as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
+
+        if not self.classes:
+            return
+
+        if not self.current_class or self.current_class.get("id") != class_id:
+            idx = next((i for i, c in enumerate(self.classes) if c.get("id") == class_id), None)
+            if idx is None:
+                return
+            self.current_class = self.classes[idx]
+            self.cb_class.current(idx)
+
+        self._refresh_students()
+
     def _refresh_students(self) -> None:
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -86,7 +110,49 @@ class StudentsTab(ttk.Frame):
             messagebox.showerror("Erreur", str(exc))
             return
 
+        students_by_code = {}
+        roster_name_keys = set()
         for student in students:
+            code = self._normalize_code(student.get("student_code"))
+            name = (student.get("full_name") or "").strip()
+            if code:
+                students_by_code[code] = student
+            if name:
+                roster_name_keys.add(self._normalize_name(name))
+
+        corrected_by_code = {}
+        corrected_by_name = {}
+        try:
+            subjects = self.api_client.get_subjects(self.current_class["id"])
+            for subject in subjects:
+                submissions = self.api_client.get_submissions(subject["id"])
+                for sub in submissions:
+                    code = self._normalize_code(sub.get("student_id"))
+                    name = (sub.get("student_name") or "").strip()
+                    if code:
+                        if code in students_by_code or code in corrected_by_code:
+                            continue
+                        corrected_by_code[code] = {
+                            "student_code": code,
+                            "full_name": name or code,
+                            "email": "",
+                        }
+                        continue
+
+                    name_key = self._normalize_name(name)
+                    if not name_key or name_key in roster_name_keys or name_key in corrected_by_name:
+                        continue
+                    corrected_by_name[name_key] = {
+                        "student_code": "",
+                        "full_name": name,
+                        "email": "",
+                    }
+        except Exception as exc:
+            messagebox.showwarning("Attention", f"Impossible de charger les copies corrigees: {exc}")
+
+        merged_students = students + list(corrected_by_code.values()) + list(corrected_by_name.values())
+
+        for student in merged_students:
             self.tree.insert(
                 "",
                 tk.END,
@@ -96,6 +162,15 @@ class StudentsTab(ttk.Frame):
                     student.get("email", ""),
                 ),
             )
+
+    def _normalize_code(self, code: str | None) -> str:
+        return (code or "").strip().upper()
+
+    def _normalize_name(self, name: str) -> str:
+        cleaned = unicodedata.normalize("NFKD", name)
+        cleaned = "".join(ch for ch in cleaned if not unicodedata.combining(ch))
+        cleaned = "".join(ch for ch in cleaned if ch.isalnum())
+        return cleaned.lower()
 
     def _import_csv(self) -> None:
         if not self.current_class:

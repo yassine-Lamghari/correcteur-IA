@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+import unicodedata
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
@@ -40,6 +41,8 @@ class MainWindow(ttk.Frame):
         self.selected_images = []
         self.batch_results = []
         self.batch_results_by_row_id = {}
+        self._students_cache = {}
+        self._students_cache_class_id = None
         self._validate_job = None
 
         self.grid(sticky="nsew", row=0, column=0)
@@ -418,13 +421,70 @@ class MainWindow(ttk.Frame):
             self.cb_subject.set('')
             self.current_class = None
             self.current_subject = None
+            self._students_cache = {}
+            self._students_cache_class_id = None
         except Exception as e:
             self._append_output(f"Error loading classes: {e}")
+
+    def _normalize_student_code(self, code: str | None) -> str:
+        return (code or "").strip().upper()
+
+    def _normalize_name(self, name: str) -> str:
+        cleaned = unicodedata.normalize("NFKD", name)
+        cleaned = "".join(ch for ch in cleaned if not unicodedata.combining(ch))
+        cleaned = re.sub(r"[^a-zA-Z0-9]+", "", cleaned)
+        return cleaned.lower()
+
+    def _merge_review_reason(self, base: str | None, reason: str) -> str:
+        if not base:
+            return reason
+        parts = [p.strip() for p in base.split(",") if p.strip()]
+        if reason not in parts:
+            parts.append(reason)
+        return ", ".join(parts)
+
+    def _clean_ocr_text(self, text: str) -> str:
+        if not text:
+            return ""
+        lines = [line for line in text.splitlines() if not line.strip().startswith("[INFO]")]
+        return "\n".join(lines).strip()
+
+    def _get_students_by_code(self) -> dict:
+        if not self.current_class:
+            return {}
+        class_id = self.current_class.get("id")
+        if class_id is None:
+            return {}
+        if self._students_cache_class_id != class_id:
+            try:
+                students = self.client.get_students(class_id)
+            except Exception as exc:
+                self._append_output(f"Erreur chargement etudiants: {exc}", level="warn")
+                self._students_cache = {}
+                self._students_cache_class_id = class_id
+                return {}
+
+            self._students_cache = {
+                self._normalize_student_code(s.get("student_code")): s for s in students
+            }
+            self._students_cache_class_id = class_id
+        return self._students_cache
+
+    def _lookup_student_name(self, student_code: str | None) -> str | None:
+        code = self._normalize_student_code(student_code)
+        if not code:
+            return None
+        student = self._get_students_by_code().get(code)
+        if not student:
+            return None
+        full_name = (student.get("full_name") or "").strip()
+        return full_name or None
 
     def _on_class_selected(self, event):
         idx = self.cb_class.current()
         if idx >= 0:
             self.current_class = self.classes[idx]
+            self._students_cache_class_id = None
             self._load_subjects()
 
     def _load_subjects(self):
@@ -601,7 +661,7 @@ class MainWindow(ttk.Frame):
         self.batch_results_by_row_id = {}
 
         for i, res in enumerate(results):
-            student_id = res.get("student_id", "Unknown")
+            student_id = res.get("student_id") or "Unknown"
             awarded = res.get("score", 0)
             answers = res.get("answers", {})
             answers_str = ", ".join([f"{k}: {v}" for k, v in answers.items()])
@@ -615,10 +675,28 @@ class MainWindow(ttk.Frame):
             review_display = "Oui" if needs_review else "Non"
             row_id = f"{student_id}-{i}"
 
+            student_name = (res.get("student_name") or "").strip()
+            mapped_name = self._lookup_student_name(student_id)
+            if mapped_name:
+                if not student_name:
+                    needs_review = True
+                    review_reason = self._merge_review_reason(review_reason, "name_from_student_list")
+                elif self._normalize_name(student_name) != self._normalize_name(mapped_name):
+                    needs_review = True
+                    review_reason = self._merge_review_reason(review_reason, "name_mismatch")
+                student_name = mapped_name
+            else:
+                if not student_name:
+                    student_name = f"Élève_{student_id}" if student_id != "Unknown" else "Élève"
+                    needs_review = True
+                    review_reason = self._merge_review_reason(review_reason, "missing_student_name")
+
+            review_display = "Oui" if needs_review else "Non"
+
             item = {
                 "row_id": row_id,
                 "student_id": student_id,
-                "student_name": f"Élève_{student_id}",
+                "student_name": student_name,
                 "score": awarded,
                 "score_display": score_display,
                 "ocr_confidence": ocr_confidence,
@@ -656,7 +734,10 @@ class MainWindow(ttk.Frame):
         if not item:
             return
         self.extraction_text.delete("1.0", tk.END)
-        text = item.get("raw_text") or "Aucun texte extrait."
+        text = self._clean_ocr_text(item.get("raw_text") or "")
+        if not text:
+            answers_str = item.get("answers_str") or ""
+            text = f"Réponses extraites: {answers_str}" if answers_str else "Aucun texte OCR."
         self.extraction_text.insert(tk.END, text)
 
     def _on_tree_double_click(self, event):
@@ -832,6 +913,8 @@ class MainWindow(ttk.Frame):
                 )
             self._append_output(f"✅ {len(self.tree.get_children())} notes enregistrées.")
             self.batch_results = []
+            if hasattr(self, "students_tab") and self.current_class:
+                self.students_tab.refresh_for_class(self.current_class.get("id"))
             
         except Exception as exc:
             messagebox.showerror("Erreur Sauvegarde", str(exc))
